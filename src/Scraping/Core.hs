@@ -7,6 +7,7 @@ import Data.Aeson
 import qualified Data.ByteString as BS
 import Data.ByteString.UTF8
 import Data.CaseInsensitive (CI, mk)
+import Data.Either (fromRight, rights)
 import Network.HTTP.Conduit
 import Network.HTTP.Simple
 import qualified Scraping.Study as S
@@ -46,36 +47,30 @@ processResp = do
 decodeResp :: IO V.VersionHistory
 decodeResp = do
   json <- (eitherDecodeStrict <$> processResp) :: IO (Either String V.VersionHistory)
-  case json of
-    (Right j) -> return j
-    Left _ -> return V.VersionHistory {V.changes = []}
+  return (fromRight V.VersionHistory {V.changes = []} json)
 
--- getVersions :: (FromJSON a) => V.VersionHistory -> IO (Response a)
-getVersions :: FromJSON a => V.VersionHistory -> IO [Either String a]
+getVersions :: (FromJSON a) => V.VersionHistory -> IO [Either String a]
 getVersions vs =
   let version_nos = map V.version $ V.changes vs
-   in forM
-        (Prelude.take 3 version_nos)
-        ( \v ->
-            let url = "clinicaltrials.gov"
-                req =
-                  defaultRequest
-                    { path = fromString $ "/api/int/studies/NCT00000125/history/" <> show v,
-                      host = url
-                    }
-                resp = httpBS req :: IO (Response BS.ByteString)
-             in eitherDecodeStrict . getResponseBody <$> resp
-        )
+      result =
+        forM
+          version_nos
+          ( \v ->
+              let url = "clinicaltrials.gov"
+                  req =
+                    defaultRequest
+                      { path = fromString $ "/api/int/studies/NCT00000125/history/" <> show v,
+                        host = url
+                      }
+                  resp = httpBS req :: IO (Response BS.ByteString)
+               in eitherDecodeStrict . getResponseBody <$> resp
+          )
+   in result
 
-matchVersions :: Either String S.Study -> IO ()
-matchVersions v = case v of
-  Right val -> print val
-  Left err -> print err
-
-showVersions :: IO ()
+showVersions :: IO [S.Study]
 showVersions =
   decodeResp
     >>= ( \resp -> do
             vs <- getVersions resp :: IO [Either String S.Study]
-            mapM_ matchVersions vs
+            pure $ rights vs
         )
